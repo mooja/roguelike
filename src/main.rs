@@ -90,7 +90,7 @@ fn main() -> rltk::BError {
 
     let mut term = RltkBuilder::simple80x50().with_title("Roguelike").build()?;
     let mut gs = State {
-        map: map::GameMap::new_simple(),
+        map: map::GameMap::new_with_rooms(),
         ecs: specs::World::new(),
         dirty: true,
     };
@@ -101,6 +101,7 @@ fn main() -> rltk::BError {
     gs.ecs.register::<components::Floor>();
     gs.ecs.register::<components::Wall>();
 
+    // create the player entity
     gs.ecs
         .create_entity()
         .with(components::Player)
@@ -113,6 +114,7 @@ fn main() -> rltk::BError {
         })
         .build();
 
+    // create the map tile entities
     for (idx, tile) in gs.map.tiles.iter().enumerate() {
         let x = idx % gs.map.w;
         let y = idx / gs.map.w;
