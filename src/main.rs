@@ -1,89 +1,151 @@
 #![allow(unused)]
 
-use rltk::{GameState, Rltk};
-use specs;
+use rltk::{GameState, Rltk, RGB};
+use specs::{Join, WorldExt};
 use specs_derive;
 
 mod components;
-
+mod map;
+mod systems;
+use components::*;
 struct State {
     map: map::GameMap,
+    ecs: specs::World,
+    dirty: bool,
 }
 
 impl GameState for State {
     fn tick(&mut self, ctx: &mut Rltk) {
+        self.process_kb_input(ctx);
+
+        if !self.dirty {
+            return;
+        }
+
         ctx.cls();
-        self.map.draw(ctx);
+
+        let renderables = self.ecs.read_storage::<Renderable>();
+        let positions = self.ecs.read_storage::<Position>();
+
+        let mut drawn = vec![0u8; 80 * 50];
+        for (pos, render) in (&positions, &renderables).join() {
+            let drawn_idx = (pos.y * 80 + pos.x) as usize;
+            if render.level > drawn[drawn_idx] {
+                drawn[drawn_idx] = render.level;
+                ctx.set(pos.x, pos.y, render.fg, render.bg, render.glyph);
+            }
+        }
+
+        self.dirty = false;
     }
 }
 
-#[allow(unused, dead_code)]
-mod map {
-    pub struct Pos {
-        x: i32,
-        y: i32,
-    }
+impl State {
+    fn move_player(&mut self, delta_x: i32, delta_y: i32) {
+        let mut positions = self.ecs.write_storage::<Position>();
+        let players = self.ecs.read_storage::<Player>();
+        let walls = self.ecs.read_storage::<Wall>();
 
-    #[derive(Clone, Copy)]
-    pub enum TileType {
-        Wall,
-        Floor,
-    }
+        let (mut dest_x, mut dest_y) = (0, 0);
 
-    pub struct GameMap {
-        pub w: u32,
-        pub h: u32,
-        pub tiles: Vec<TileType>,
-    }
+        for (_player, pos) in (&players, &mut positions).join() {
+            dest_x = (pos.x + delta_x).rem_euclid(self.map.w as i32);
+            dest_y = (pos.y + delta_y).rem_euclid(self.map.h as i32);
+        }
 
-    impl GameMap {
-        pub fn new_simple() -> GameMap {
-            let mut m = GameMap {
-                w: 80,
-                h: 50,
-                tiles: vec![TileType::Floor; 80 * 50],
-            };
-
-            for x in 0..m.w {
-                let idx = m.xy_idx(x, 0);
-                m.tiles[idx] = TileType::Wall;
+        for (_wall, pos) in (&walls, &positions).join() {
+            if pos.x == dest_x && pos.y == dest_y {
+                return;
             }
-
-            m
         }
 
-        pub fn xy_idx(&self, x: u32, y: u32) -> usize {
-            (x as u32 + self.w * y as u32) as usize
+        for (_player, pos) in (&players, &mut positions).join() {
+            pos.x = dest_x;
+            pos.y = dest_y;
         }
+    }
 
-        pub fn draw(&self, ctx: &mut rltk::Rltk) {
-            let mut x = 0;
-            let mut y = 0;
-            for t in &self.tiles {
-                match t {
-                    TileType::Floor => ctx.set(x, y, rltk::TEAL, rltk::BLACK, rltk::to_cp437('.')),
-                    TileType::Wall => ctx.set(x, y, rltk::TEAL, rltk::BLACK, rltk::to_cp437('#')),
+    fn process_kb_input(&mut self, term: &mut Rltk) {
+        use rltk::VirtualKeyCode;
+        match term.key {
+            None => {}
+            Some(key) => {
+                self.dirty = true;
+
+                match key {
+                    VirtualKeyCode::Up | VirtualKeyCode::K => self.move_player(0, -1),
+                    VirtualKeyCode::Down | VirtualKeyCode::J => self.move_player(0, 1),
+                    VirtualKeyCode::Left | VirtualKeyCode::H => self.move_player(-1, 0),
+                    VirtualKeyCode::Right | VirtualKeyCode::L => self.move_player(1, 0),
+                    _ => {}
                 };
-
-                x += 1;
-                if x == self.w {
-                    x = 0;
-                    y += 1;
-                }
             }
-        }
-
-        pub fn generate_rooms(&mut self) {
-            unimplemented!()
         }
     }
 }
 
 fn main() -> rltk::BError {
     use rltk::RltkBuilder;
-    let mut context = RltkBuilder::simple80x50().with_title("Roguelike").build()?;
-    let gs = State {
+    use specs::prelude::*;
+
+    let mut term = RltkBuilder::simple80x50().with_title("Roguelike").build()?;
+    let mut gs = State {
         map: map::GameMap::new_simple(),
+        ecs: specs::World::new(),
+        dirty: true,
     };
-    rltk::main_loop(context, gs)
+
+    gs.ecs.register::<components::Player>();
+    gs.ecs.register::<components::Position>();
+    gs.ecs.register::<components::Renderable>();
+    gs.ecs.register::<components::Floor>();
+    gs.ecs.register::<components::Wall>();
+
+    gs.ecs
+        .create_entity()
+        .with(components::Player)
+        .with(components::Position { x: 20, y: 20 })
+        .with(components::Renderable {
+            glyph: rltk::to_cp437('@'),
+            fg: RGB::named(rltk::YELLOW),
+            bg: RGB::named(rltk::BLACK),
+            level: 5,
+        })
+        .build();
+
+    for (idx, tile) in gs.map.tiles.iter().enumerate() {
+        let x = idx % gs.map.w;
+        let y = idx / gs.map.w;
+
+        let mut builder = gs.ecs.create_entity().with(components::Position {
+            x: x as i32,
+            y: y as i32,
+        });
+
+        match tile {
+            map::TileType::Floor => {
+                builder = builder
+                    .with(components::Floor)
+                    .with(components::Renderable {
+                        glyph: rltk::to_cp437('.'),
+                        fg: RGB::named(rltk::TEAL),
+                        bg: RGB::named(rltk::BLACK),
+                        level: 1,
+                    });
+            }
+
+            map::TileType::Wall => {
+                builder = builder.with(components::Wall).with(components::Renderable {
+                    glyph: rltk::to_cp437('#'),
+                    fg: RGB::named(rltk::TEAL),
+                    bg: RGB::named(rltk::BLACK),
+                    level: 1,
+                });
+            }
+        }
+
+        builder.build();
+    }
+
+    rltk::main_loop(term, gs)
 }
