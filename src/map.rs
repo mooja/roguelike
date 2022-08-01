@@ -14,6 +14,7 @@ pub struct GameMap {
     pub w: usize,
     pub h: usize,
     pub tiles: Vec<TileType>,
+    pub rooms: Vec<Room>
 }
 
 impl GameMap {
@@ -43,6 +44,7 @@ impl GameMap {
             w: 80,
             h: 50,
             tiles: vec![TileType::Floor; 80 * 50],
+            rooms: vec![]
         };
 
         m.draw_borders();
@@ -66,6 +68,7 @@ impl GameMap {
             w: 80,
             h: 50,
             tiles: vec![TileType::Wall; 80 * 50],
+            rooms: vec![]
         };
 
         use rltk::RandomNumberGenerator;
@@ -120,6 +123,8 @@ impl GameMap {
                 *m.tile_entry(p.x as usize, p.y as usize) = TileType::Floor;
             }
         }
+
+        m.rooms = rooms;
 
         m
     }

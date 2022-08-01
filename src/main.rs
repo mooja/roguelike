@@ -105,7 +105,10 @@ fn main() -> rltk::BError {
     gs.ecs
         .create_entity()
         .with(components::Player)
-        .with(components::Position { x: 20, y: 20 })
+        .with(components::Position {
+            x: gs.map.rooms[0].center_pos().x,
+            y: gs.map.rooms[0].center_pos().y,
+        })
         .with(components::Renderable {
             glyph: rltk::to_cp437('@'),
             fg: RGB::named(rltk::YELLOW),
