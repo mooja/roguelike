@@ -1,15 +1,16 @@
 #![allow(unused)]
 
-use rltk::{GameState, Rltk, RGB};
-use specs::{Join, WorldExt};
+use rltk::{Algorithm2D, BaseMap, GameState, Rltk, RGB};
+use specs::{Join, RunNow, WorldExt};
 use specs_derive;
 
 mod components;
 mod map;
 mod systems;
 use components::*;
+use map::{GameMap, TileType};
+
 struct State {
-    map: map::GameMap,
     ecs: specs::World,
     dirty: bool,
 }
@@ -24,16 +25,47 @@ impl GameState for State {
 
         ctx.cls();
 
-        let renderables = self.ecs.read_storage::<Renderable>();
-        let positions = self.ecs.read_storage::<Position>();
-
-        let mut drawn = vec![0u8; 80 * 50];
-        for (pos, render) in (&positions, &renderables).join() {
-            let drawn_idx = (pos.y * 80 + pos.x) as usize;
-            if render.level > drawn[drawn_idx] {
-                drawn[drawn_idx] = render.level;
-                ctx.set(pos.x, pos.y, render.fg, render.bg, render.glyph);
+        // render map
+        let (mut x, mut y) = (0, 0);
+        let m = self.ecs.fetch::<GameMap>();
+        for tile in &m.tiles {
+            match tile {
+                TileType::Wall => ctx.set(
+                    x,
+                    y,
+                    RGB::named(rltk::TEAL),
+                    RGB::named(rltk::BLACK),
+                    rltk::to_cp437('#'),
+                ),
+                TileType::Floor => ctx.set(
+                    x,
+                    y,
+                    RGB::named(rltk::TEAL),
+                    RGB::named(rltk::BLACK),
+                    rltk::to_cp437('.'),
+                ),
             }
+
+            x += 1;
+            if x == m.w {
+                x = 0;
+                y += 1;
+            }
+        }
+
+        // render player
+        let players = self.ecs.read_storage::<Player>();
+        let positions = self.ecs.read_storage::<Position>();
+        let renderables = self.ecs.read_storage::<Renderable>();
+
+        for (_player, pos, render) in (&players, &positions, &renderables).join() {
+            ctx.set(
+                pos.x,
+                pos.y,
+                RGB::named(rltk::YELLOW),
+                RGB::named(rltk::BLACK),
+                rltk::to_cp437('@'),
+            );
         }
 
         self.dirty = false;
@@ -44,24 +76,18 @@ impl State {
     fn move_player(&mut self, delta_x: i32, delta_y: i32) {
         let mut positions = self.ecs.write_storage::<Position>();
         let players = self.ecs.read_storage::<Player>();
-        let walls = self.ecs.read_storage::<Wall>();
-
-        let (mut dest_x, mut dest_y) = (0, 0);
-
-        for (_player, pos) in (&players, &mut positions).join() {
-            dest_x = (pos.x + delta_x).rem_euclid(self.map.w as i32);
-            dest_y = (pos.y + delta_y).rem_euclid(self.map.h as i32);
-        }
-
-        for (_wall, pos) in (&walls, &positions).join() {
-            if pos.x == dest_x && pos.y == dest_y {
-                return;
+        for (p, pos) in (&players, &mut positions).join() {
+            let m = self.ecs.fetch::<GameMap>();
+            let (dest_x, dest_y) = (pos.x + delta_x, pos.y + delta_y);
+            let dest_tile = &m.tiles[m.xy_idx(dest_x, dest_y)];
+            match dest_tile {
+                &TileType::Floor => {
+                    pos.x = dest_x;
+                    pos.y = dest_y;
+                    self.dirty = true;
+                }
+                _ => {}
             }
-        }
-
-        for (_player, pos) in (&players, &mut positions).join() {
-            pos.x = dest_x;
-            pos.y = dest_y;
         }
     }
 
@@ -82,6 +108,10 @@ impl State {
             }
         }
     }
+
+    fn run_systems(&mut self) {
+        self.ecs.maintain();
+    }
 }
 
 fn main() -> rltk::BError {
@@ -90,7 +120,6 @@ fn main() -> rltk::BError {
 
     let mut term = RltkBuilder::simple80x50().with_title("Roguelike").build()?;
     let mut gs = State {
-        map: map::GameMap::new_with_rooms(),
         ecs: specs::World::new(),
         dirty: true,
     };
@@ -98,16 +127,17 @@ fn main() -> rltk::BError {
     gs.ecs.register::<components::Player>();
     gs.ecs.register::<components::Position>();
     gs.ecs.register::<components::Renderable>();
-    gs.ecs.register::<components::Floor>();
-    gs.ecs.register::<components::Wall>();
+    gs.ecs.register::<components::Viewshed>();
+
+    let mut m = map::GameMap::new_with_rooms();
 
     // create the player entity
     gs.ecs
         .create_entity()
         .with(components::Player)
         .with(components::Position {
-            x: gs.map.rooms[0].center_pos().x,
-            y: gs.map.rooms[0].center_pos().y,
+            x: m.rooms[0].center_pos().x,
+            y: m.rooms[0].center_pos().y,
         })
         .with(components::Renderable {
             glyph: rltk::to_cp437('@'),
@@ -115,42 +145,13 @@ fn main() -> rltk::BError {
             bg: RGB::named(rltk::BLACK),
             level: 5,
         })
+        .with(components::Viewshed {
+            visible_tiles: vec![],
+            range: 8,
+        })
         .build();
 
-    // create the map tile entities
-    for (idx, tile) in gs.map.tiles.iter().enumerate() {
-        let x = idx % gs.map.w;
-        let y = idx / gs.map.w;
-
-        let mut builder = gs.ecs.create_entity().with(components::Position {
-            x: x as i32,
-            y: y as i32,
-        });
-
-        match tile {
-            map::TileType::Floor => {
-                builder = builder
-                    .with(components::Floor)
-                    .with(components::Renderable {
-                        glyph: rltk::to_cp437('.'),
-                        fg: RGB::named(rltk::TEAL),
-                        bg: RGB::named(rltk::BLACK),
-                        level: 1,
-                    });
-            }
-
-            map::TileType::Wall => {
-                builder = builder.with(components::Wall).with(components::Renderable {
-                    glyph: rltk::to_cp437('#'),
-                    fg: RGB::named(rltk::TEAL),
-                    bg: RGB::named(rltk::BLACK),
-                    level: 1,
-                });
-            }
-        }
-
-        builder.build();
-    }
+    gs.ecs.insert(m);
 
     rltk::main_loop(term, gs)
 }

@@ -1,3 +1,6 @@
+use rltk::{Algorithm2D, BaseMap};
+use std::convert::TryInto;
+
 #[derive(PartialEq, Clone, Copy)]
 pub struct Pos {
     pub x: i32,
@@ -14,12 +17,20 @@ pub struct GameMap {
     pub w: usize,
     pub h: usize,
     pub tiles: Vec<TileType>,
-    pub rooms: Vec<Room>
+    pub rooms: Vec<Room>,
 }
 
 impl GameMap {
-    pub fn xy_idx(&self, x: usize, y: usize) -> usize {
-        (x + self.w * y)
+    pub fn xy_idx<T, E>(&self, x: T, y: T) -> usize
+    where
+        E: std::fmt::Debug,
+        T: TryInto<usize, Error = E>,
+    {
+        let (x, y) = (
+            x.try_into().expect("Could not unpack x index"),
+            y.try_into().expect("Could not unpack y index"),
+        );
+        x + self.w * y
     }
 
     fn tile_entry(&mut self, x: usize, y: usize) -> &'_ mut TileType {
@@ -44,7 +55,7 @@ impl GameMap {
             w: 80,
             h: 50,
             tiles: vec![TileType::Floor; 80 * 50],
-            rooms: vec![]
+            rooms: vec![],
         };
 
         m.draw_borders();
@@ -68,7 +79,7 @@ impl GameMap {
             w: 80,
             h: 50,
             tiles: vec![TileType::Wall; 80 * 50],
-            rooms: vec![]
+            rooms: vec![],
         };
 
         use rltk::RandomNumberGenerator;
@@ -145,10 +156,6 @@ impl GameMap {
             }
         }
     }
-
-    pub fn generate_rooms(&mut self) {
-        unimplemented!()
-    }
 }
 
 pub struct Room {
@@ -223,3 +230,29 @@ impl Room {
         }
     }
 }
+
+// impl BaseMap for State {
+//     fn is_opaque(&self, _idx: usize) -> bool {
+//         let target_pos: map::Pos = map::Pos {
+//             x: _idx as i32 % self.map.w as i32,
+//             y: _idx as i32 / self.map.h as i32,
+//         };
+
+//         let walls = self.ecs.read_storage::<components::Wall>();
+//         let positions = self.ecs.read_storage::<components::Position>();
+
+//         for (w, p) in (&walls, &positions).join() {
+//             if p.x == target_pos.x && p.y == target_pos.y {
+//                 return true;
+//             }
+//         }
+
+//         false
+//     }
+// }
+
+// impl Algorithm2D for State {
+//     fn dimensions(&self) -> rltk::Point {
+//         rltk::Point::new(self.map.w, self.map.h)
+//     }
+// }
