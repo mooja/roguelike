@@ -18,57 +18,12 @@ struct State {
 impl GameState for State {
     fn tick(&mut self, ctx: &mut Rltk) {
         self.process_kb_input(ctx);
+        self.run_systems();
 
-        if !self.dirty {
-            return;
+        if self.dirty {
+            self.draw_map(ctx);
+            self.dirty = false;
         }
-
-        ctx.cls();
-
-        // render map
-        let (mut x, mut y) = (0, 0);
-        let m = self.ecs.fetch::<GameMap>();
-        for tile in &m.tiles {
-            match tile {
-                TileType::Wall => ctx.set(
-                    x,
-                    y,
-                    RGB::named(rltk::TEAL),
-                    RGB::named(rltk::BLACK),
-                    rltk::to_cp437('#'),
-                ),
-                TileType::Floor => ctx.set(
-                    x,
-                    y,
-                    RGB::named(rltk::TEAL),
-                    RGB::named(rltk::BLACK),
-                    rltk::to_cp437('.'),
-                ),
-            }
-
-            x += 1;
-            if x == m.w {
-                x = 0;
-                y += 1;
-            }
-        }
-
-        // render player
-        let players = self.ecs.read_storage::<Player>();
-        let positions = self.ecs.read_storage::<Position>();
-        let renderables = self.ecs.read_storage::<Renderable>();
-
-        for (_player, pos, render) in (&players, &positions, &renderables).join() {
-            ctx.set(
-                pos.x,
-                pos.y,
-                RGB::named(rltk::YELLOW),
-                RGB::named(rltk::BLACK),
-                rltk::to_cp437('@'),
-            );
-        }
-
-        self.dirty = false;
     }
 }
 
@@ -76,7 +31,8 @@ impl State {
     fn move_player(&mut self, delta_x: i32, delta_y: i32) {
         let mut positions = self.ecs.write_storage::<Position>();
         let players = self.ecs.read_storage::<Player>();
-        for (p, pos) in (&players, &mut positions).join() {
+        let mut vs = self.ecs.write_storage::<Viewshed>();
+        for (p, pos, vs) in (&players, &mut positions, &mut vs).join() {
             let m = self.ecs.fetch::<GameMap>();
             let (dest_x, dest_y) = (pos.x + delta_x, pos.y + delta_y);
             let dest_tile = &m.tiles[m.xy_idx(dest_x, dest_y)];
@@ -85,6 +41,7 @@ impl State {
                     pos.x = dest_x;
                     pos.y = dest_y;
                     self.dirty = true;
+                    vs.dirty = true;
                 }
                 _ => {}
             }
@@ -110,7 +67,83 @@ impl State {
     }
 
     fn run_systems(&mut self) {
+        let mut vis_system = systems::VisibilitySystem {};
+        vis_system.run_now(&self.ecs);
         self.ecs.maintain();
+    }
+
+    fn draw_map(&self, ctx: &mut Rltk) {
+        ctx.cls();
+
+        let m = self.ecs.fetch::<GameMap>();
+        let vs = self.ecs.read_storage::<Viewshed>();
+        let pl = self.ecs.read_storage::<Player>();
+        let (mut x, mut y) = (0, 0);
+
+        for (_pl, vs) in (&pl, &vs).join() {
+            for tile in &m.tiles {
+                let p = rltk::Point::new(x, y);
+                if vs.visible_tiles.contains(&p) {
+                    match tile {
+                        TileType::Wall => ctx.set(
+                            x,
+                            y,
+                            RGB::named(rltk::TEAL),
+                            RGB::named(rltk::BLACK),
+                            rltk::to_cp437('#'),
+                        ),
+                        TileType::Floor => ctx.set(
+                            x,
+                            y,
+                            RGB::named(rltk::TEAL),
+                            RGB::named(rltk::BLACK),
+                            rltk::to_cp437('.'),
+                        ),
+                    }
+                } else {
+                    let p_idx = m.point2d_to_index(p);
+                    if m.revealed_tiles[p_idx] {
+                        match tile {
+                            TileType::Wall => ctx.set(
+                                x,
+                                y,
+                                RGB::named(rltk::GRAY),
+                                RGB::named(rltk::BLACK),
+                                rltk::to_cp437('#'),
+                            ),
+                            TileType::Floor => ctx.set(
+                                x,
+                                y,
+                                RGB::named(rltk::GRAY),
+                                RGB::named(rltk::BLACK),
+                                rltk::to_cp437('.'),
+                            ),
+                        }
+                    }
+                }
+
+                x += 1;
+                if x == m.w {
+                    x = 0;
+                    y += 1;
+                }
+            }
+        }
+
+        // render player
+        let players = self.ecs.read_storage::<Player>();
+        let positions = self.ecs.read_storage::<Position>();
+        let renderables = self.ecs.read_storage::<Renderable>();
+
+        for (_player, pos, render) in (&players, &positions, &renderables).join() {
+            ctx.set(
+                pos.x,
+                pos.y,
+                RGB::named(rltk::YELLOW),
+                RGB::named(rltk::BLACK),
+                rltk::to_cp437('@'),
+            );
+        }
     }
 }
 
@@ -148,6 +181,7 @@ fn main() -> rltk::BError {
         .with(components::Viewshed {
             visible_tiles: vec![],
             range: 8,
+            dirty: true
         })
         .build();
 

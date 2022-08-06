@@ -7,7 +7,7 @@ pub struct Pos {
     pub y: i32,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 pub enum TileType {
     Wall,
     Floor,
@@ -18,6 +18,7 @@ pub struct GameMap {
     pub h: usize,
     pub tiles: Vec<TileType>,
     pub rooms: Vec<Room>,
+    pub revealed_tiles: Vec<bool>
 }
 
 impl GameMap {
@@ -56,6 +57,7 @@ impl GameMap {
             h: 50,
             tiles: vec![TileType::Floor; 80 * 50],
             rooms: vec![],
+            revealed_tiles: vec![false; 80 * 50]
         };
 
         m.draw_borders();
@@ -80,6 +82,7 @@ impl GameMap {
             h: 50,
             tiles: vec![TileType::Wall; 80 * 50],
             rooms: vec![],
+            revealed_tiles: vec![false; 80 * 50]
         };
 
         use rltk::RandomNumberGenerator;
@@ -231,28 +234,14 @@ impl Room {
     }
 }
 
-// impl BaseMap for State {
-//     fn is_opaque(&self, _idx: usize) -> bool {
-//         let target_pos: map::Pos = map::Pos {
-//             x: _idx as i32 % self.map.w as i32,
-//             y: _idx as i32 / self.map.h as i32,
-//         };
+impl BaseMap for GameMap {
+    fn is_opaque(&self, _idx: usize) -> bool {
+        &self.tiles[_idx] == &TileType::Wall
+    }
+}
 
-//         let walls = self.ecs.read_storage::<components::Wall>();
-//         let positions = self.ecs.read_storage::<components::Position>();
-
-//         for (w, p) in (&walls, &positions).join() {
-//             if p.x == target_pos.x && p.y == target_pos.y {
-//                 return true;
-//             }
-//         }
-
-//         false
-//     }
-// }
-
-// impl Algorithm2D for State {
-//     fn dimensions(&self) -> rltk::Point {
-//         rltk::Point::new(self.map.w, self.map.h)
-//     }
-// }
+impl Algorithm2D for GameMap {
+    fn dimensions(&self) -> rltk::Point {
+        rltk::Point::new(self.w, self.h)
+    }
+}

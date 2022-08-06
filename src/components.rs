@@ -23,8 +23,9 @@ pub struct Renderable {
     pub level: u8,
 }
 
-#[derive(Component)]
+#[derive(Component, Debug)]
 pub struct Viewshed {
     pub visible_tiles: Vec<rltk::Point>,
     pub range: i32,
+    pub dirty: bool
 }
