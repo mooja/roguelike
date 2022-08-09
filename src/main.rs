@@ -78,71 +78,45 @@ impl State {
         let m = self.ecs.fetch::<GameMap>();
         let vs = self.ecs.read_storage::<Viewshed>();
         let pl = self.ecs.read_storage::<Player>();
-        let (mut x, mut y) = (0, 0);
+        let pos = self.ecs.read_storage::<Position>();
+        let ren = self.ecs.read_storage::<Renderable>();
+        let mon = self.ecs.read_storage::<Monster>();
 
-        for (_pl, vs) in (&pl, &vs).join() {
-            for tile in &m.tiles {
-                let p = rltk::Point::new(x, y);
-                if vs.visible_tiles.contains(&p) {
-                    match tile {
-                        TileType::Wall => ctx.set(
-                            x,
-                            y,
-                            RGB::named(rltk::TEAL),
-                            RGB::named(rltk::BLACK),
-                            rltk::to_cp437('#'),
-                        ),
-                        TileType::Floor => ctx.set(
-                            x,
-                            y,
-                            RGB::named(rltk::TEAL),
-                            RGB::named(rltk::BLACK),
-                            rltk::to_cp437('.'),
-                        ),
-                    }
+        // render map tiles
+        for (_pl, vs, player_pos) in (&pl, &vs, &pos).join() {
+            for (idx, tile) in m.tiles.iter().enumerate() {
+                if !m.revealed_tiles[idx] {
+                    continue;
+                }
+
+                let render_pos = m.index_to_point2d(idx);
+                let mut fg_color = if vs.visible_tiles.contains(&render_pos) {
+                    RGB::named(rltk::GREEN)
                 } else {
-                    let p_idx = m.point2d_to_index(p);
-                    if m.revealed_tiles[p_idx] {
-                        match tile {
-                            TileType::Wall => ctx.set(
-                                x,
-                                y,
-                                RGB::named(rltk::GRAY),
-                                RGB::named(rltk::BLACK),
-                                rltk::to_cp437('#'),
-                            ),
-                            TileType::Floor => ctx.set(
-                                x,
-                                y,
-                                RGB::named(rltk::GRAY),
-                                RGB::named(rltk::BLACK),
-                                rltk::to_cp437('.'),
-                            ),
-                        }
-                    }
-                }
+                    RGB::named(rltk::GRAY)
+                };
+                let bg_color = RGB::named(rltk::BLACK);
+                let mut glyph = match tile {
+                    TileType::Floor => rltk::to_cp437('.'),
+                    TileType::Wall => rltk::to_cp437('#'),
+                };
 
-                x += 1;
-                if x == m.w {
-                    x = 0;
-                    y += 1;
-                }
+                ctx.set(render_pos.x, render_pos.y, fg_color, bg_color, glyph);
             }
         }
 
         // render player
-        let players = self.ecs.read_storage::<Player>();
-        let positions = self.ecs.read_storage::<Position>();
-        let renderables = self.ecs.read_storage::<Renderable>();
+        for (pl, pos, ren) in (&pl, &pos, &ren).join() {
+            ctx.set(pos.x, pos.y, ren.fg, ren.bg, ren.glyph);
+        }
 
-        for (_player, pos, render) in (&players, &positions, &renderables).join() {
-            ctx.set(
-                pos.x,
-                pos.y,
-                RGB::named(rltk::YELLOW),
-                RGB::named(rltk::BLACK),
-                rltk::to_cp437('@'),
-            );
+        // render monsters
+        for (pl, vs) in (&pl, &vs).join() {
+            for (mon, pos, ren) in (&mon, &pos, &ren).join() {
+                if vs.visible_tiles.contains(&rltk::Point::new(pos.x, pos.y)) {
+                    ctx.set(pos.x, pos.y, ren.fg, ren.bg, ren.glyph);
+                }
+            }
         }
     }
 }
@@ -161,6 +135,7 @@ fn main() -> rltk::BError {
     gs.ecs.register::<components::Position>();
     gs.ecs.register::<components::Renderable>();
     gs.ecs.register::<components::Viewshed>();
+    gs.ecs.register::<components::Monster>();
 
     let mut m = map::GameMap::new_with_rooms();
 
@@ -176,14 +151,29 @@ fn main() -> rltk::BError {
             glyph: rltk::to_cp437('@'),
             fg: RGB::named(rltk::YELLOW),
             bg: RGB::named(rltk::BLACK),
-            level: 5,
         })
         .with(components::Viewshed {
             visible_tiles: vec![],
             range: 8,
-            dirty: true
+            dirty: true,
         })
         .build();
+
+    for r in &m.rooms {
+        gs.ecs
+            .create_entity()
+            .with(components::Monster {})
+            .with(components::Position {
+                x: r.center_pos().x,
+                y: r.center_pos().y,
+            })
+            .with(Renderable {
+                glyph: rltk::to_cp437('@'),
+                fg: RGB::named(rltk::RED),
+                bg: RGB::named(rltk::BLACK),
+            })
+            .build();
+    }
 
     gs.ecs.insert(m);
 
