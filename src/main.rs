@@ -12,17 +12,27 @@ use map::{GameMap, TileType};
 
 struct State {
     ecs: specs::World,
+    ss: SleepState,
     dirty: bool,
+}
+
+#[derive(PartialEq, Clone, Copy)]
+pub enum SleepState {
+    Running,
+    Sleeping,
 }
 
 impl GameState for State {
     fn tick(&mut self, ctx: &mut Rltk) {
-        self.process_kb_input(ctx);
-        self.run_systems();
+        self.ss = self.process_kb_input(ctx);
+        match self.ss {
+            SleepState::Running => {
+                self.run_systems();
+                self.draw_map(ctx);
+                self.dirty = false;
+            }
 
-        if self.dirty {
-            self.draw_map(ctx);
-            self.dirty = false;
+            _ => {}
         }
     }
 }
@@ -31,10 +41,27 @@ impl State {
     fn move_player(&mut self, delta_x: i32, delta_y: i32) {
         let mut positions = self.ecs.write_storage::<Position>();
         let players = self.ecs.read_storage::<Player>();
+        let monsters = self.ecs.read_storage::<Monster>();
         let mut vs = self.ecs.write_storage::<Viewshed>();
+        let entities = self.ecs.entities();
+
+        for (p, pos) in (&players, &positions).join() {
+            let dest = Position {
+                x: pos.x + delta_x,
+                y: pos.y + delta_y,
+            };
+
+            for (_e, e_pos) in (&entities, &positions).join() {
+                if dest == *e_pos {
+                    return;
+                }
+            }
+        }
+
         for (p, pos, vs) in (&players, &mut positions, &mut vs).join() {
             let m = self.ecs.fetch::<GameMap>();
             let (dest_x, dest_y) = (pos.x + delta_x, pos.y + delta_y);
+
             let dest_tile = &m.tiles[m.xy_idx(dest_x, dest_y)];
             match dest_tile {
                 &TileType::Floor => {
@@ -48,28 +75,37 @@ impl State {
         }
     }
 
-    fn process_kb_input(&mut self, term: &mut Rltk) {
+    fn process_kb_input(&mut self, term: &mut Rltk) -> SleepState {
         use rltk::VirtualKeyCode;
         match term.key {
-            None => {}
+            None => SleepState::Sleeping,
             Some(key) => {
-                self.dirty = true;
-
                 match key {
                     VirtualKeyCode::Up | VirtualKeyCode::K => self.move_player(0, -1),
                     VirtualKeyCode::Down | VirtualKeyCode::J => self.move_player(0, 1),
                     VirtualKeyCode::Left | VirtualKeyCode::H => self.move_player(-1, 0),
                     VirtualKeyCode::Right | VirtualKeyCode::L => self.move_player(1, 0),
-                    _ => {}
+                    _ => return SleepState::Sleeping,
                 };
+
+                self.dirty = true;
+                SleepState::Running
             }
         }
     }
 
     fn run_systems(&mut self) {
+        if self.ss != SleepState::Running {
+            return;
+        }
+
         let mut vis_system = systems::VisibilitySystem {};
         vis_system.run_now(&self.ecs);
+        let mut monster_ai_system = systems::MonsterAI;
+        monster_ai_system.run_now(&self.ecs);
+
         self.ecs.maintain();
+        self.ss = SleepState::Sleeping;
     }
 
     fn draw_map(&self, ctx: &mut Rltk) {
@@ -128,6 +164,7 @@ fn main() -> rltk::BError {
     let mut term = RltkBuilder::simple80x50().with_title("Roguelike").build()?;
     let mut gs = State {
         ecs: specs::World::new(),
+        ss: SleepState::Running,
         dirty: true,
     };
 
@@ -159,7 +196,7 @@ fn main() -> rltk::BError {
         })
         .build();
 
-    for r in &m.rooms {
+    for r in m.rooms.iter().skip(1) {
         gs.ecs
             .create_entity()
             .with(components::Monster {})
@@ -172,10 +209,16 @@ fn main() -> rltk::BError {
                 fg: RGB::named(rltk::RED),
                 bg: RGB::named(rltk::BLACK),
             })
+            .with(Viewshed {
+                visible_tiles: vec![],
+                range: 8,
+                dirty: true,
+            })
             .build();
     }
 
     gs.ecs.insert(m);
+    gs.ecs.insert(SleepState::Running);
 
     rltk::main_loop(term, gs)
 }
